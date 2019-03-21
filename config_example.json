@@ -1,0 +1,12 @@
+{
+    "repositories": [
+        {
+            "user": "foo",
+            "repo": "bar"
+        },
+        {
+            "user": "foo",
+            "repo": "bar"
+        }
+    ]
+}
