@@ -1,106 +1,92 @@
 package main
 
 import (
-	"encoding/json"
-	"io/ioutil"
+	"flag"
+	"fmt"
 	"log"
-	"net/http"
 	"os"
-	"strconv"
-	"time"
 
+	"github.com/bmf-san/go-github-pull-request/client"
 	"github.com/gocarina/gocsv"
-	"github.com/joho/godotenv"
 )
 
-func LoadEnv() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
+var token string
+var path string
+var assignee string
+var org string
+var owner string
+
+func init() {
+	flag.StringVar(&token, "token", "", "GITHUB_API_TOKEN")
+	flag.StringVar(&path, "path", "", "PATH_TO_CSV_FILE")
+	flag.StringVar(&assignee, "assignee", "", "ASSIGNEE")
+	flag.StringVar(&org, "org", "", "ORG")
+	flag.StringVar(&owner, "owner", "", "OWNER")
 }
 
-type Config struct {
-	Repositories []Repository `json:"repositories"`
-}
-
-type Repository struct {
-	User string `json:"user`
-	Repo string `json:"repo`
-}
-
-// see: https://github.com/google/go-github/blob/master/github/pulls.go
-type PullRequest struct {
-	ID        *int64     `json:"id,omitempty"`
-	Number    *int       `json:"number,omitempty"`
-	State     *string    `json:"state,omitempty"`
-	Title     *string    `json:"title,omitempty"`
-	Body      *string    `json:"body,omitempty"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
-	ClosedAt  *time.Time `json:"closed_at,omitempty"`
-	HTMLURL   *string    `json:"html_url,omitempty"`
-	Assignee  *User      `csv:"-"`
-}
-
-type User struct {
-	Login *string `json:"login,omitempty"`
-}
+const (
+	// max is 100
+	perPage = 100
+	state   = "all"
+	// Since there is no option to get all pages, specify 1000 pages for the time being
+	page = 1000
+)
 
 func main() {
-	LoadEnv()
+	log.Print("[Start]")
 
-	row, err := ioutil.ReadFile("./config.json")
-	if err != nil {
-		log.Fatal(err)
+	flag.Parse()
+
+	c := client.NewClient(token)
+
+	var repos []*client.Repository
+	for i := 1; i < page; i++ {
+		fmt.Printf("GetOrgRepos: page %v\n", i)
+		r, err := c.Repos.GetOrgRepos(org, client.GetOrgRepoParams{
+			PerPage: perPage,
+			Page:    i,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		if len(r) == 0 {
+			break
+		}
+		repos = append(repos, r...)
 	}
 
-	var config Config
-	if err := json.Unmarshal(row, &config); err != nil {
-		log.Fatal(err)
-	}
-
-	// TODO: Refactoring
-	for _, c := range config.Repositories {
-		// for the time being, max page is 10
-		for index := 1; index < 11; index++ {
-			// see: https://developer.github.com/enterprise/2.4/v3/pulls/#list-pull-requests
-			resp, err := http.Get("https://api.github.com/repos/" + c.User + "/" + c.Repo + "/pulls?access_token=" + os.Getenv("GITHUB_API_TOKEN") + "&per_page=100&state=all&page=" + strconv.Itoa(index))
-
+	data := map[string][]*client.PullRequest{}
+	for _, r := range repos {
+		for i := 1; i < page; i++ {
+			fmt.Printf("GetPullsByAssignee: owner %v repo %v page %v\n", owner, r.Name, i)
+			p, err := c.Pulls.GetPullsByAssignee(assignee, owner, r.Name, client.GetPullParams{
+				PerPage: perPage,
+				State:   state,
+				Page:    i,
+			})
 			if err != nil {
 				log.Fatal(err)
 			}
-			defer resp.Body.Close()
-
-			body, err := ioutil.ReadAll(resp.Body)
-
-			var pullrequest []PullRequest
-			if err := json.Unmarshal(body, &pullrequest); err != nil {
-				log.Fatal(err)
+			if len(p) == 0 {
+				break
 			}
-
-			// List pull requests API doesn't support Assignee query parameter
-			// see: https://developer.github.com/enterprise/2.4/v3/pulls/#list-pull-requests
-			result := []PullRequest{}
-			for _, p := range pullrequest {
-				if p.Assignee != nil {
-					if *p.Assignee.Login == os.Getenv("ASSIGNEE_USER") {
-						result = append(result, p)
-					}
-				}
-			}
-
-			if len(result) > 1 {
-				file, err := os.OpenFile(os.Getenv("PATH_TO_CSV_FILE")+c.Repo+".csv", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-
-				if err != nil {
-					log.Fatal(err)
-				}
-
-				defer file.Close()
-
-				gocsv.MarshalFile(result, file)
-			}
+			data[r.Name] = append(data[r.Name], p...)
 		}
 	}
+
+	for i, v := range data {
+		genCSV(fmt.Sprintf("%v.csv", i), v)
+	}
+
+	log.Print("[Finish]")
+}
+
+func genCSV(fileName string, in interface{}) {
+	f, err := os.OpenFile(path+fileName, os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	gocsv.MarshalFile(in, f)
 }
