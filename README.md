@@ -1,14 +1,9 @@
 # go-github-pull-request
-This is a my tool built with golang for gathering pull requests data.
-
-This tool can get pull request data from any repository.
+A tool to get the data of Pull Requests to which you are assigned and generate CSV.
 
 # Get Started
-To copy and edit these files.
 `cp .env.example .env`
-`cp .config_example.json config.json`
-
-`go run main.go`
+`make run`
 
 # References
 - [GitHub Developer - #list-pull-request](https://developer.github.com/enterprise/2.4/v3/pulls/#list-pull-requests)
